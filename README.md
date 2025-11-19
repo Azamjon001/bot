@@ -1,0 +1,2 @@
+# bot
+cross reklama
