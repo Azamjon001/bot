@@ -1,4 +1,5 @@
 import logging
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 import sqlite3
@@ -10,19 +11,19 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+logger = logging.getLogger(__name__)
 
-# Токен бота (замени на свой)
-BOT_TOKEN = "7910545283:AAGaCF6WKng5iiFhXgDy9EHp3il2AMW8vgo"
+# Токен бота
+BOT_TOKEN = os.getenv('BOT_TOKEN', "7910545283:AAGaCF6WKng5iiFhXgDy9EHp3il2AMW8vgo")
 
-# ID администратора (замени на свой Telegram ID)
-ADMIN_ID = 5234758651  # Замени на свой реальный ID
+# ID администратора
+ADMIN_ID = 5234758651
 
 # Подключение к базе данных
 def init_db():
-    conn = sqlite3.connect('referral_bot.db')
+    conn = sqlite3.connect('referral_bot.db', check_same_thread=False)
     cursor = conn.cursor()
     
-    # Таблица пользователей
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -41,7 +42,7 @@ def init_db():
 def generate_referral_token():
     while True:
         token = ''.join(random.choices(string.digits, k=8))
-        conn = sqlite3.connect('referral_bot.db')
+        conn = sqlite3.connect('referral_bot.db', check_same_thread=False)
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM users WHERE referral_token = ?', (token,))
         if not cursor.fetchone():
@@ -51,10 +52,9 @@ def generate_referral_token():
 
 # Регистрация пользователя
 def register_user(user_id, username, first_name, referred_by=None):
-    conn = sqlite3.connect('referral_bot.db')
+    conn = sqlite3.connect('referral_bot.db', check_same_thread=False)
     cursor = conn.cursor()
     
-    # Проверяем, существует ли пользователь
     cursor.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
     user = cursor.fetchone()
     
@@ -69,7 +69,7 @@ def register_user(user_id, username, first_name, referred_by=None):
 
 # Получение информации о пользователе
 def get_user_info(user_id):
-    conn = sqlite3.connect('referral_bot.db')
+    conn = sqlite3.connect('referral_bot.db', check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
     user = cursor.fetchone()
@@ -78,7 +78,7 @@ def get_user_info(user_id):
 
 # Получение рефералов пользователя
 def get_user_referrals(user_id):
-    conn = sqlite3.connect('referral_bot.db')
+    conn = sqlite3.connect('referral_bot.db', check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute('''
         SELECT user_id, username, first_name 
@@ -91,7 +91,7 @@ def get_user_referrals(user_id):
 
 # Получение топ-10 пользователей по количеству рефералов
 def get_top_referrers():
-    conn = sqlite3.connect('referral_bot.db')
+    conn = sqlite3.connect('referral_bot.db', check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute('''
         SELECT 
@@ -111,18 +111,15 @@ def get_top_referrers():
 
 # Получение общей статистики
 def get_admin_stats():
-    conn = sqlite3.connect('referral_bot.db')
+    conn = sqlite3.connect('referral_bot.db', check_same_thread=False)
     cursor = conn.cursor()
     
-    # Общее количество пользователей
     cursor.execute('SELECT COUNT(*) FROM users')
     total_users = cursor.fetchone()[0]
     
-    # Количество пользователей с рефералами
     cursor.execute('SELECT COUNT(DISTINCT referred_by) FROM users WHERE referred_by IS NOT NULL')
     users_with_referrals = cursor.fetchone()[0]
     
-    # Общее количество рефералов
     cursor.execute('SELECT COUNT(*) FROM users WHERE referred_by IS NOT NULL')
     total_referrals = cursor.fetchone()[0]
     
@@ -137,22 +134,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = user.username
     first_name = user.first_name
     
-    # Проверяем реферальный параметр
     referred_by = None
     if context.args:
         try:
             referred_by = int(context.args[0])
-            # Проверяем, существует ли пользователь, который пригласил
             referrer = get_user_info(referred_by)
             if referrer:
                 referred_by = referred_by
         except ValueError:
             referred_by = None
     
-    # Регистрируем пользователя
     register_user(user_id, username, first_name, referred_by)
     
-    # Приветственное сообщение
     welcome_text = f"""
 Привет, {first_name}! 👋
 
@@ -162,7 +155,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 Выбери действие из меню ниже:
     """
     
-    # Создаем клавиатуру с кнопками
     keyboard = [
         [InlineKeyboardButton("📊 Мой счет", callback_data="score")],
         [InlineKeyboardButton("👤 Кто меня пригласил", callback_data="referrer")],
@@ -176,16 +168,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
-    # Проверяем, является ли пользователь администратором
     if user_id != ADMIN_ID:
         await update.message.reply_text("❌ У вас нет доступа к этой команде.")
         return
     
-    # Получаем статистику
     total_users, users_with_referrals, total_referrals = get_admin_stats()
     top_referrers = get_top_referrers()
     
-    # Формируем сообщение со статистикой
     stats_text = f"""
 📊 **АДМИНИСТРАТИВНАЯ СТАТИСТИКА**
 
@@ -214,7 +203,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     if query.data == "score":
-        # Показываем счет рефералов
         referrals = get_user_referrals(user_id)
         
         if referrals:
@@ -234,8 +222,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     
     elif query.data == "referrer":
-        # Показываем, кто пригласил пользователя
-        if user_info and user_info[4]:  # referred_by
+        if user_info and user_info[4]:
             referrer_id = user_info[4]
             referrer_info = get_user_info(referrer_id)
             
@@ -254,10 +241,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     
     elif query.data == "get_referral":
-        # Показываем реферальную ссылку
         if user_info:
-            referral_token = user_info[3]
-            referral_link = f"https://t.me/{(await context.bot.get_me()).username}?start={user_id}"
+            bot_username = (await context.bot.get_me()).username
+            referral_link = f"https://t.me/{bot_username}?start={user_id}"
             
             message = f"""
 🔗 Ваша реферальная ссылка:
@@ -277,7 +263,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
     
     elif query.data == "back_to_main":
-        # Возвращаемся к главному меню
         user = query.from_user
         welcome_text = f"""
 Привет, {user.first_name}! 👋
@@ -297,8 +282,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await query.edit_message_text(text=welcome_text, reply_markup=reply_markup)
 
+# Обработчик ошибок
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(f"Ошибка: {context.error}")
+
 # Основная функция
-def main():
+async def main():
     # Инициализируем базу данных
     init_db()
     
@@ -310,9 +299,13 @@ def main():
     application.add_handler(CommandHandler("adminstatistikapolzovateley", admin_statistics))
     application.add_handler(CallbackQueryHandler(button_handler))
     
+    # Добавляем обработчик ошибок
+    application.add_error_handler(error_handler)
+    
     # Запускаем бота
     print("Бот запущен!")
-    application.run_polling()
+    await application.run_polling()
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
