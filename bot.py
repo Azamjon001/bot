@@ -1,10 +1,10 @@
 import logging
 import os
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 import sqlite3
 import random
 import string
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 # Настройка логирования
 logging.basicConfig(
@@ -37,6 +37,7 @@ def init_db():
     
     conn.commit()
     conn.close()
+    print("База данных инициализирована")
 
 # Генерация уникального токена
 def generate_referral_token():
@@ -65,6 +66,7 @@ def register_user(user_id, username, first_name, referred_by=None):
             VALUES (?, ?, ?, ?, ?)
         ''', (user_id, username, first_name, referral_token, referred_by))
         conn.commit()
+        print(f"Зарегистрирован новый пользователь: {user_id}")
     conn.close()
 
 # Получение информации о пользователе
@@ -141,6 +143,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             referrer = get_user_info(referred_by)
             if referrer:
                 referred_by = referred_by
+                print(f"Пользователь {user_id} приглашен пользователем {referred_by}")
         except ValueError:
             referred_by = None
     
@@ -287,7 +290,7 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Ошибка: {context.error}")
 
 # Основная функция
-async def main():
+def main():
     # Инициализируем базу данных
     init_db()
     
@@ -304,8 +307,8 @@ async def main():
     
     # Запускаем бота
     print("Бот запущен!")
-    await application.run_polling()
+    application.run_polling()
 
+# Запуск бота
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    main()
