@@ -10,6 +10,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+logger = logging.getLogger(__name__)
 
 # Bot tokeni (o'z tokeningizni qo'ying)
 BOT_TOKEN = "7910545283:AAGaCF6WKng5iiFhXgDy9EHp3il2AMW8vgo"
@@ -19,7 +20,7 @@ ADMIN_ID = 5234758651  # O'zingizning haqiqiy ID'ingizga almashtiring
 
 # Ma'lumotlar bazasiga ulanish
 def init_db():
-    conn = sqlite3.connect('referral_bot.db')
+    conn = sqlite3.connect('referral_bot.db', check_same_thread=False)
     cursor = conn.cursor()
     
     # Foydalanuvchilar jadvali
@@ -39,19 +40,19 @@ def init_db():
 
 # Takrorlanmas token yaratish
 def generate_referral_token():
+    conn = sqlite3.connect('referral_bot.db', check_same_thread=False)
+    cursor = conn.cursor()
     while True:
         token = ''.join(random.choices(string.digits, k=8))
-        conn = sqlite3.connect('referral_bot.db')
-        cursor = conn.cursor()
         cursor.execute('SELECT * FROM users WHERE referral_token = ?', (token,))
         if not cursor.fetchone():
             conn.close()
             return token
-        conn.close()
+    conn.close()
 
 # Foydalanuvchini ro'yxatdan o'tkazish
 def register_user(user_id, username, first_name, referred_by=None):
-    conn = sqlite3.connect('referral_bot.db')
+    conn = sqlite3.connect('referral_bot.db', check_same_thread=False)
     cursor = conn.cursor()
     
     # Foydalanuvchi mavjudligini tekshiramiz
@@ -65,11 +66,15 @@ def register_user(user_id, username, first_name, referred_by=None):
             VALUES (?, ?, ?, ?, ?)
         ''', (user_id, username, first_name, referral_token, referred_by))
         conn.commit()
+        logger.info(f"Yangi foydalanuvchi qo'shildi: {user_id}")
+    else:
+        logger.info(f"Foydalanuvchi allaqachon mavjud: {user_id}")
+    
     conn.close()
 
 # Foydalanuvchi haqida ma'lumot olish
 def get_user_info(user_id):
-    conn = sqlite3.connect('referral_bot.db')
+    conn = sqlite3.connect('referral_bot.db', check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
     user = cursor.fetchone()
@@ -78,7 +83,7 @@ def get_user_info(user_id):
 
 # Foydalanuvchi takliflari
 def get_user_referrals(user_id):
-    conn = sqlite3.connect('referral_bot.db')
+    conn = sqlite3.connect('referral_bot.db', check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute('''
         SELECT user_id, username, first_name 
@@ -91,7 +96,7 @@ def get_user_referrals(user_id):
 
 # Eng ko'p taklif qilgan 10 foydalanuvchi
 def get_top_referrers():
-    conn = sqlite3.connect('referral_bot.db')
+    conn = sqlite3.connect('referral_bot.db', check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute('''
         SELECT 
@@ -111,7 +116,7 @@ def get_top_referrers():
 
 # Umumiy statistika
 def get_admin_stats():
-    conn = sqlite3.connect('referral_bot.db')
+    conn = sqlite3.connect('referral_bot.db', check_same_thread=False)
     cursor = conn.cursor()
     
     # Umumiy foydalanuvchilar soni
@@ -132,61 +137,71 @@ def get_admin_stats():
 
 # /start buyrug'i uchun ishlovchi
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_id = user.id
-    username = user.username
-    first_name = user.first_name
-    
-    # Taklif parametrini tekshiramiz
-    referred_by = None
-    if context.args:
-        try:
-            referred_by = int(context.args[0])
-            # Taklif qilgan foydalanuvchi mavjudligini tekshiramiz
-            referrer = get_user_info(referred_by)
-            if referrer:
-                referred_by = referred_by
-        except ValueError:
-            referred_by = None
-    
-    # Foydalanuvchini ro'yxatdan o'tkazamiz
-    register_user(user_id, username, first_name, referred_by)
-    
-    # Xush kelibsiz matni
-    welcome_text = f"""
+    try:
+        user = update.effective_user
+        user_id = user.id
+        username = user.username or "Noma'lum"
+        first_name = user.first_name or "Foydalanuvchi"
+        
+        logger.info(f"/start komandasi: {user_id} - {first_name}")
+        
+        # Taklif parametrini tekshiramiz
+        referred_by = None
+        if context.args:
+            try:
+                referred_by = int(context.args[0])
+                # Taklif qilgan foydalanuvchi mavjudligini tekshiramiz
+                referrer = get_user_info(referred_by)
+                if referrer:
+                    referred_by = referred_by
+                    logger.info(f"Foydalanuvchi {user_id} ni {referred_by} taklif qildi")
+            except ValueError:
+                referred_by = None
+                logger.warning(f"Noto'g'ri taklif parametri: {context.args[0]}")
+        
+        # Foydalanuvchini ro'yxatdan o'tkazamiz
+        register_user(user_id, username, first_name, referred_by)
+        
+        # Xush kelibsiz matni
+        welcome_text = f"""
 Salom, {first_name}! 👋
 
 Taklif tizimiga xush kelibsiz! 
 Do'stlaringizni taklif qiling va mukofotlar oling! 🎉
 
 Quyidagi menyudan harakatni tanlang:
-    """
-    
-    # Tugmali klaviaturani yaratamiz
-    keyboard = [
-        [InlineKeyboardButton("📊 Mening hisobim", callback_data="score")],
-        [InlineKeyboardButton("👤 Meni kim taklif qildi", callback_data="referrer")],
-        [InlineKeyboardButton("🔗 Taklif havolasi olish", callback_data="get_referral")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(welcome_text, reply_markup=reply_markup)
+        """
+        
+        # Tugmali klaviaturani yaratamiz
+        keyboard = [
+            [InlineKeyboardButton("📊 Mening hisobim", callback_data="score")],
+            [InlineKeyboardButton("👤 Meni kim taklif qildi", callback_data="referrer")],
+            [InlineKeyboardButton("🔗 Taklif havolasi olish", callback_data="get_referral")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(welcome_text, reply_markup=reply_markup)
+        
+    except Exception as e:
+        logger.error(f"Start handler xatosi: {e}")
+        await update.message.reply_text("❌ Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 # Administrator buyrug'i uchun ishlovchi
 async def admin_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    # Foydalanuvchi administrator ekanligini tekshiramiz
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Sizda bu buyruqni bajarish huquqi yo'q.")
-        return
-    
-    # Statistikani olamiz
-    total_users, users_with_referrals, total_referrals = get_admin_stats()
-    top_referrers = get_top_referrers()
-    
-    # Statistik xabarni shakllantiramiz
-    stats_text = f"""
+    try:
+        user_id = update.effective_user.id
+        
+        # Foydalanuvchi administrator ekanligini tekshiramiz
+        if user_id != ADMIN_ID:
+            await update.message.reply_text("❌ Sizda bu buyruqni bajarish huquqi yo'q.")
+            return
+        
+        # Statistikani olamiz
+        total_users, users_with_referrals, total_referrals = get_admin_stats()
+        top_referrers = get_top_referrers()
+        
+        # Statistik xabarni shakllantiramiz
+        stats_text = f"""
 📊 **ADMINISTRATOR STATISTIKASI**
 
 👥 Umumiy foydalanuvchilar soni: {total_users}
@@ -195,71 +210,76 @@ async def admin_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 🏆 **TAKLIFLAR BO'YICHA TOP-10 FOYDALANUVCHI:**
 """
-    
-    if top_referrers:
-        for i, (user_id, username, first_name, referral_count) in enumerate(top_referrers, 1):
-            username_display = f"@{username}" if username else first_name
-            stats_text += f"\n{i}. {username_display} - {referral_count} taklif"
-    else:
-        stats_text += "\n😔 Hozircha takliflar bo'yicha ma'lumot yo'q"
-    
-    await update.message.reply_text(stats_text, parse_mode='Markdown')
+        
+        if top_referrers:
+            for i, (user_id, username, first_name, referral_count) in enumerate(top_referrers, 1):
+                username_display = f"@{username}" if username else first_name
+                stats_text += f"\n{i}. {username_display} - {referral_count} taklif"
+        else:
+            stats_text += "\n😔 Hozircha takliflar bo'yicha ma'lumot yo'q"
+        
+        await update.message.reply_text(stats_text, parse_mode='Markdown')
+        
+    except Exception as e:
+        logger.error(f"Admin statistics xatosi: {e}")
+        await update.message.reply_text("❌ Statistikani olishda xatolik yuz berdi.")
 
 # Tugmalar bosilganda ishlovchi
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-    user_info = get_user_info(user_id)
-    
-    await query.answer()
-    
-    if query.data == "score":
-        # Takliflar hisobini ko'rsatamiz
-        referrals = get_user_referrals(user_id)
+    try:
+        query = update.callback_query
+        user_id = query.from_user.id
+        user_info = get_user_info(user_id)
         
-        if referrals:
-            referral_list = "👥 Sizning takliflaringiz:\n\n"
-            for i, ref in enumerate(referrals, 1):
-                ref_user_id, ref_username, ref_first_name = ref
-                username_display = f"@{ref_username}" if ref_username else ref_first_name
-                referral_list += f"{i}. {username_display}\n"
-            
-            referral_list += f"\n📈 Jami takliflar: {len(referrals)}"
-        else:
-            referral_list = "😔 Hozircha sizda takliflar yo'q.\nMukofot olish uchun do'stlaringizni taklif qiling! 🎁"
+        await query.answer()
         
-        await query.edit_message_text(
-            text=referral_list,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_main")]])
-        )
-    
-    elif query.data == "referrer":
-        # Foydalanuvchini kim taklif qilganini ko'rsatamiz
-        if user_info and user_info[4]:  # referred_by
-            referrer_id = user_info[4]
-            referrer_info = get_user_info(referrer_id)
+        if query.data == "score":
+            # Takliflar hisobini ko'rsatamiz
+            referrals = get_user_referrals(user_id)
             
-            if referrer_info:
-                ref_user_id, ref_username, ref_first_name, _, _ = referrer_info
-                username_display = f"@{ref_username}" if ref_username else ref_first_name
-                message = f"🤝 Sizni taklif qilgan: {username_display}"
+            if referrals:
+                referral_list = "👥 Sizning takliflaringiz:\n\n"
+                for i, ref in enumerate(referrals, 1):
+                    ref_user_id, ref_username, ref_first_name = ref
+                    username_display = f"@{ref_username}" if ref_username else ref_first_name
+                    referral_list += f"{i}. {username_display}\n"
+                
+                referral_list += f"\n📈 Jami takliflar: {len(referrals)}"
             else:
-                message = "❌ Sizni taklif qilgan foydalanuvchi haqida ma'lumot topilmadi."
-        else:
-            message = "❌ Siz taklif havolasi orqali qo'shilmagansiz."
-        
-        await query.edit_message_text(
-            text=message,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_main")]])
-        )
-    
-    elif query.data == "get_referral":
-        # Taklif havolasini ko'rsatamiz
-        if user_info:
-            referral_token = user_info[3]
-            referral_link = f"https://t.me/{(await context.bot.get_me()).username}?start={user_id}"
+                referral_list = "😔 Hozircha sizda takliflar yo'q.\nMukofot olish uchun do'stlaringizni taklif qiling! 🎁"
             
-            message = f"""
+            await query.edit_message_text(
+                text=referral_list,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_main")]])
+            )
+        
+        elif query.data == "referrer":
+            # Foydalanuvchini kim taklif qilganini ko'rsatamiz
+            if user_info and user_info[4]:  # referred_by
+                referrer_id = user_info[4]
+                referrer_info = get_user_info(referrer_id)
+                
+                if referrer_info:
+                    ref_user_id, ref_username, ref_first_name, _, _ = referrer_info
+                    username_display = f"@{ref_username}" if ref_username else ref_first_name
+                    message = f"🤝 Sizni taklif qilgan: {username_display}"
+                else:
+                    message = "❌ Sizni taklif qilgan foydalanuvchi haqida ma'lumot topilmadi."
+            else:
+                message = "❌ Siz taklif havolasi orqali qo'shilmagansiz."
+            
+            await query.edit_message_text(
+                text=message,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_main")]])
+            )
+        
+        elif query.data == "get_referral":
+            # Taklif havolasini ko'rsatamiz
+            if user_info:
+                bot_username = (await context.bot.get_me()).username
+                referral_link = f"https://t.me/{bot_username}?start={user_id}"
+                
+                message = f"""
 🔗 Sizning taklif havolangiz:
 
 `{referral_link}`
@@ -268,34 +288,42 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 Har bir taklif qilingan do'st uchun mukofot olasiz! 🎁
 
 👥 Sizning takliflaringiz soni: {len(get_user_referrals(user_id))}
-            """
-            
-            await query.edit_message_text(
-                text=message,
-                parse_mode='Markdown',
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_main")]])
-            )
-    
-    elif query.data == "back_to_main":
-        # Asosiy menyuga qaytamiz
-        user = query.from_user
-        welcome_text = f"""
+                """
+                
+                await query.edit_message_text(
+                    text=message,
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_main")]])
+                )
+        
+        elif query.data == "back_to_main":
+            # Asosiy menyuga qaytamiz
+            user = query.from_user
+            welcome_text = f"""
 Salom, {user.first_name}! 👋
 
 Taklif tizimiga xush kelibsiz! 
 Do'stlaringizni taklif qiling va mukofotlar oling! 🎉
 
 Quyidagi menyudan harakatni tanlang:
-        """
-        
-        keyboard = [
-            [InlineKeyboardButton("📊 Mening hisobim", callback_data="score")],
-            [InlineKeyboardButton("👤 Meni kim taklif qildi", callback_data="referrer")],
-            [InlineKeyboardButton("🔗 Taklif havolasi olish", callback_data="get_referral")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await query.edit_message_text(text=welcome_text, reply_markup=reply_markup)
+            """
+            
+            keyboard = [
+                [InlineKeyboardButton("📊 Mening hisobim", callback_data="score")],
+                [InlineKeyboardButton("👤 Meni kim taklif qildi", callback_data="referrer")],
+                [InlineKeyboardButton("🔗 Taklif havolasi olish", callback_data="get_referral")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(text=welcome_text, reply_markup=reply_markup)
+            
+    except Exception as e:
+        logger.error(f"Button handler xatosi: {e}")
+        await query.edit_message_text("❌ Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
+
+# Xatolik ishlovchisi
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(f"Xatolik yuz berdi: {context.error}")
 
 # Asosiy funksiya
 def main():
@@ -307,11 +335,14 @@ def main():
     
     # Ishlovchilarni qo'shamiz
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("adminstatistikapolzovateley", admin_statistics))
+    application.add_handler(CommandHandler("admin", admin_statistics))
     application.add_handler(CallbackQueryHandler(button_handler))
     
+    # Xatolik ishlovchisini qo'shamiz
+    application.add_error_handler(error_handler)
+    
     # Botni ishga tushiramiz
-    print("Bot ishga tushdi!")
+    logger.info("Bot ishga tushdi!")
     application.run_polling()
 
 if __name__ == "__main__":
